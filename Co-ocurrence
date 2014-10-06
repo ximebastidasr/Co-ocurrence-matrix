@@ -1,0 +1,240 @@
+#include <main.h>
+
+Mat GetGLCM(Mat gris, int dX, int dY,int Ngris);
+vector<float> HaralickCarac(Mat glcm);
+vector<double>PromedioRango(Mat gris256,int Ngris);
+
+vector<double> Carac(Mat imagen){
+
+    Mat gris256;
+    vector <double> vecCarac;
+    
+    cvtColor(imagen,gris256,CV_RGB2GRAY);
+    //reduce los niveles de gris de una imagen a 16
+    int Ngris=1;//número de veces que se divide la imagen para obtener cierto nivel de gris Ej: 256/2=128 niveles de gris    
+
+    vecCarac=PromedioRango(gris256,Ngris);    
+    
+    
+    return vecCarac;
+}
+
+//obtiene la matriz de co-ocurrencia
+Mat GetGLCM(Mat gris, int dX, int dY, int Ngris){
+    Ngris=256/Ngris;
+    Mat glcm (Ngris,Ngris,CV_8UC1);//se calcula la matriz de co-ocurrencia no simétrica
+    Mat glcmSim(Ngris,Ngris,CV_8UC1);//se calcula la matriz de co-ocurrencia simétrica
+    Mat glcmProb(Ngris,Ngris,CV_32FC1);//se calcula la probabilidad de ocurrencia para cada valor de glcmSim
+    unsigned char sum=0;//cantidad de veces que se repite un nivel de gris
+    int sumProb=0;//Número total
+    int deY;
+    //se calcula la matriz de coocurrencia
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            for(int n=0;n<gris.rows-dX;n++){
+                if(dY==-1)//sólo aplica cuando theta=45°
+                    deY=0;
+                else
+                    deY=dY;
+                for(int m=0;m<gris.cols-deY;m++){
+                    if(gris.at<char>(n,m)==i && gris.at<char>(n+dX,m+dY)==j&& (m+dY>=0)){
+                        //cout<<n<<" "<<m<<" "<<n+dX<<" "<<m+dY<<endl;
+                        sum++;
+                    }
+                }
+            }
+            glcm.at<unsigned char>(i,j)=sum;
+            sum=0;
+        }
+    }
+    //Se convierte la matriz en simétrica sumandola con su transpuesta
+    for(int i=0;i<glcmSim.rows;i++){
+        for(int j=0;j<glcmSim.cols;j++){
+            glcmSim.at<unsigned char>(i,j)=glcm.at<unsigned char>(i,j)+glcm.at<unsigned char>(j,i);
+        }
+    }
+    //se crea una matriz de probabilidad con el fin de realizar la normalización
+    for(int i=0;i<glcmProb.rows;i++){
+        for(int j=0;j<glcmProb.cols;j++){
+            sumProb+=glcmSim.at<unsigned char>(i,j);
+        }
+    }
+    for(int i=0;i<glcmProb.rows;i++){
+        for(int j=0;j<glcmProb.cols;j++){
+            glcmProb.at<float>(i,j)=(float)glcmSim.at<unsigned char>(i,j)/sumProb;
+        }
+    }
+    return glcmProb;
+}
+//obtiene las características de Haralick para textura
+vector<float> HaralickCarac(Mat glcm){
+    vector<float>F;
+    F.resize(13);
+
+    float media=0,dev=0;//media y desviación estandar
+
+    //medias para filas y columnas mediaX=mediaY=media
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            media+=i*glcm.at<float>(i,j);
+        }
+    }    
+
+    //desviaciones estandar para filas y columnas desvX=desvY=desv
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            dev+=pow((i-media),2)*glcm.at<float>(i,j);
+        }
+    }
+    dev=sqrt(dev);
+    //Px+y(k); k=i+j k={0,1,2,.....,2(Ng-1)}
+    float Pxy[2*(glcm.rows-1)];
+    int k=0;
+    for(int i=0;i<2*(glcm.rows-1);i++){
+        Pxy[i]=0;
+    }
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            k=i+j;
+            Pxy[k]=Pxy[k]+glcm.at<float>(i,j);
+        }
+    }
+    Mat PXY(1,2*(glcm.rows-1),CV_32F,Pxy);
+
+    //Px-y(k); k=i-j k={0,1,2,.....,2(Ng-1)}
+    vector<float> Pxym;
+    Pxym.resize(glcm.rows);
+    k=0;
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            k=i-j;
+            if(k>=0)
+            Pxym.at(k)+=glcm.at<float>(i,j);
+        }
+    }
+
+    //f1 segundo momento angular o energía
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            F.at(0)+=pow(glcm.at<float>(i,j),2);
+        }
+    }    
+    //f2 contraste
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            F.at(1)+=pow((i-j),2)*glcm.at<float>(i,j);
+        }
+    }
+
+    //f3 correlación
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            F.at(2)+=(i-media)*(j-media)*glcm.at<float>(i,j)/(dev*dev);
+        }
+    }
+
+    //f4 Suma de cuadrados ó varianza
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            F.at(3)+=pow((i-media),2)*glcm.at<float>(i,j);
+        }
+    }    
+
+    //f5 momento de diferencia inversa o homogeneidad
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            F.at(4)+=(1/(1+pow(i-j,2)))*glcm.at<float>(i,j);
+        }
+    }
+
+    //f6 suma promedio; Px+y(k); k=i+j k={0,1,2,.....,2(Ng-1)}
+    for(int i=0;i<=2*(glcm.rows-1);i++){
+        F.at(5)+=i*PXY.at<float>(i);
+    }
+
+    //f7 suma varinza
+    for(int i=0;i<=2*(glcm.rows-1);i++){
+        F.at(6)+=pow((i-F.at(5)),2)*PXY.at<float>(i);
+    }
+
+    //f8 suma entropía
+    for(int i=0;i<=2*(glcm.rows-1);i++){
+        if(PXY.at<float>(i)!=0)
+        F.at(7)+=-(PXY.at<float>(i)*log(PXY.at<float>(i)));
+    }
+
+    //f9 Entropía
+    for(int i=0;i<glcm.rows;i++){
+        for(int j=0;j<glcm.cols;j++){
+            if(glcm.at<float>(i,j)!=0)//se asume que log(0)=0;
+            F.at(8)+=-(glcm.at<float>(i,j)*log(glcm.at<float>(i,j)));
+        }
+    }
+
+    //f10 Diferencia de varianza
+    //se debe calcular primero la diferencia promedio
+
+    float DA=0;
+    for(int i=0;i<Pxym.size();i++){
+        DA+=i*Pxym.at(i);
+    }
+    for(int i=0;i<Pxym.size();i++){
+        F.at(9)+=pow(i-DA,2)*Pxym.at(i);
+    }
+    //f11 Diferencia entropía
+    for(int i=0;i<Pxym.size();i++){
+        if(Pxym.at(i)!=0)
+        F.at(10)+=-(Pxym.at(i)*log(Pxym.at(i)));
+    }
+
+    return F;
+}
+vector<double>PromedioRango(Mat gris256,int Ngris){
+
+    vector<double>vecCarac;
+    Mat gris=gris256/Ngris;    
+    Mat glcm;
+    glcm=GetGLCM(gris,0,1,Ngris);
+    vector<float>F0=HaralickCarac(glcm);
+    //cout<<(Mat)F0<<endl;
+    glcm=GetGLCM(gris,1,-1,Ngris);
+    vector<float>F45=HaralickCarac(glcm);
+    //cout<<(Mat)F45<<endl;
+    glcm=GetGLCM(gris,1,0,Ngris);
+    vector<float>F90=HaralickCarac(glcm);
+    //cout<<(Mat)F90<<endl;
+    glcm=GetGLCM(gris,1,1,Ngris);
+    vector<float>F135=HaralickCarac(glcm);
+    //cout<<(Mat)F135<<endl;
+    float temp=0;
+    float Rmax=0,Rmin=0,R=0;
+    float vecTemp[4];
+    //Las característicasd eentrada al clasficador comprenden el promedio y el rango de las cuatro direcciones
+    //se calcula el promedio entre rotación para cada característica
+    for(int i=0;i<F0.size();i++){
+        temp=(F0.at(i)+F45.at(i)+F90.at(i)+F135.at(i))/4;
+        vecCarac.push_back(temp);
+    }
+    //se calcula el rango para cada una de las características
+    for(int i=0;i<F0.size();i++){
+        vecTemp[0]=F0.at(i);
+        vecTemp[1]=F45.at(i);
+        vecTemp[2]=F90.at(i);
+        vecTemp[3]=F135.at(i);
+        Rmax=vecTemp[0];
+        Rmin=vecTemp[0];
+        //se encuentra el valor más grande y el más pequeño para cada una de las características
+        for(int j=0;j<4;j++){
+            if(vecTemp[i]>Rmax){
+                Rmax=vecTemp[i];
+            }
+            if(vecTemp[i]<Rmin){
+                Rmin=vecTemp[i];
+            }
+        }
+        R=Rmax-Rmin;//se calcula el rango
+        vecCarac.push_back(R);
+    }
+
+    return vecCarac;
+}
